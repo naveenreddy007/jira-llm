@@ -1,43 +1,38 @@
 import os
 import requests
-from dotenv import load_dotenv
 import json
+from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
 
-class DeepSeekLLM:
-    """Service for interacting with DeepSeek LLM API."""
+class LLMService:
+    """A generic LLM service that can work with various API providers."""
     
     def __init__(self):
-        self.api_key = os.getenv("DEEPSEEK_API_KEY")
+        # Try to load API key from environment
+        self.api_key = os.getenv("DEEPSEEK_API_KEY") or os.getenv("OPENAI_API_KEY") or os.getenv("LLM_API_KEY")
+        
         if not self.api_key:
-            print("WARNING: DeepSeek API key not found. Please add it to your .env file.")
-            raise ValueError("DeepSeek API key not found. Please add it to your .env file.")
+            print("WARNING: No LLM API key found. Please add it to your .env file.")
+            raise ValueError("No LLM API key found in environment variables")
+        
+        # Default to DeepSeek API, but can be overridden via environment variable
+        self.api_url = os.getenv("LLM_API_URL", "https://api.deepseek.com/v1/chat/completions")
+        self.model = os.getenv("LLM_MODEL", "deepseek-chat")
+        
+        # Determine API provider from the URL
+        if "deepseek" in self.api_url:
+            self.provider = "deepseek"
+        elif "openai" in self.api_url:
+            self.provider = "openai"
         else:
-            print("INFO: DeepSeek API key loaded successfully.")
+            self.provider = "unknown"
         
-        self.api_url = "https://api.deepseek.com/v1/chat/completions"
-        self.headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json"
-        }
-        
-        # Test connection to verify API works
-        self.test_connection()
-    
-    def test_connection(self):
-        """Test the connection to DeepSeek API."""
-        try:
-            response = self.generate_response("Hello, this is a test message.")
-            print(f"INFO: Successfully connected to DeepSeek API. Response: {response[:30]}...")
-            return True
-        except Exception as e:
-            print(f"ERROR: Failed to connect to DeepSeek API: {str(e)}")
-            return False
+        print(f"INFO: Using LLM provider: {self.provider} with model: {self.model}")
     
     def generate_response(self, prompt, system_prompt=None, temperature=0.7, max_tokens=1000):
-        """Generate a response from DeepSeek LLM."""
+        """Generate a response from the LLM API."""
         messages = []
         
         # Add system prompt if provided
@@ -47,54 +42,100 @@ class DeepSeekLLM:
         # Add user prompt
         messages.append({"role": "user", "content": prompt})
         
+        # Create payload based on provider
         payload = {
-            "model": "deepseek-chat",  # Adjust based on which DeepSeek model you're using
+            "model": self.model,
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens
         }
         
-        print(f"DEBUG: Sending request to DeepSeek API with payload: {json.dumps(payload)[:100]}...")
+        # Headers with authorization
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
         
         try:
-            response = requests.post(self.api_url, headers=self.headers, json=payload, timeout=30)
+            print(f"DEBUG: Sending request to LLM API ({self.provider})")
+            response = requests.post(self.api_url, headers=headers, json=payload, timeout=30)
+            
+            # Log the response status
             print(f"DEBUG: Received response with status code {response.status_code}")
             
-            # Print full response for debugging
-            print(f"DEBUG: Raw response: {response.text[:200]}...")
+            if response.status_code != 200:
+                print(f"ERROR: API returned error: {response.status_code}")
+                print(f"Response text: {response.text[:500]}")
+                return f"Error: The LLM API returned status code {response.status_code}"
             
-            response.raise_for_status()
-            
+            # Parse the response
             result = response.json()
-            return result["choices"][0]["message"]["content"]
             
-        except requests.exceptions.RequestException as e:
-            print(f"ERROR: Request exception when calling DeepSeek API: {str(e)}")
-            return f"Error calling DeepSeek API: {str(e)}"
-        except (KeyError, IndexError, json.JSONDecodeError) as e:
-            print(f"ERROR: Error parsing DeepSeek response: {str(e)}")
-            return f"Error parsing DeepSeek response: {str(e)}"
+            # Extract the response text based on provider format
+            if self.provider in ["deepseek", "openai"]:
+                # Both DeepSeek and OpenAI use similar response formats
+                return result["choices"][0]["message"]["content"]
+            else:
+                # Generic fallback - attempt to extract text from any format
+                print(f"DEBUG: Using generic response parsing for unknown provider")
+                print(f"DEBUG: Response structure: {json.dumps(result)[:200]}...")
+                
+                # Try several common response formats
+                if "choices" in result and len(result["choices"]) > 0:
+                    choice = result["choices"][0]
+                    if "message" in choice and "content" in choice["message"]:
+                        return choice["message"]["content"]
+                    elif "text" in choice:
+                        return choice["text"]
+                
+                if "result" in result:
+                    return result["result"]
+                
+                if "response" in result:
+                    return result["response"]
+                
+                # If we can't figure it out, return the raw response
+                return f"Could not parse response. Raw response: {json.dumps(result)[:500]}"
+            
+        except requests.exceptions.ConnectionError:
+            return "Error: Could not connect to the LLM API. Please check your internet connection and API URL."
+        except requests.exceptions.Timeout:
+            return "Error: Request to LLM API timed out. The service might be overloaded or down."
+        except json.JSONDecodeError:
+            return f"Error: Could not parse API response as JSON. Raw response: {response.text[:500]}"
         except Exception as e:
-            print(f"ERROR: Unexpected error with DeepSeek API: {str(e)}")
-            return f"Unexpected error with DeepSeek API: {str(e)}"
+            return f"Error: {str(e)}"
 
-# Simple fallback class that can be used if the main LLM service fails
 class MockLLM:
-    """A mock LLM service that returns pre-defined responses."""
+    """A fallback LLM service that returns predefined responses."""
     
     def generate_response(self, prompt, system_prompt=None, temperature=0.7, max_tokens=1000):
-        """Generate a mock response."""
-        print(f"DEBUG: Using MockLLM since DeepSeek is not available.")
-        return "This is a mock response as the LLM service is not properly configured. Please check your API key and connection."
+        """Return a mock response."""
+        # Log the received prompt
+        print(f"MockLLM received prompt: {prompt[:100]}...")
+        
+        # Detect what kind of response is expected based on the prompt
+        if "summarize" in prompt.lower() or "summary" in prompt.lower():
+            return "This is a mock summary generated because the LLM service is not properly configured. The actual ticket would be summarized here in 2-3 concise sentences."
+        
+        elif "categorize" in prompt.lower() or "category" in prompt.lower():
+            return "Feature Request"
+        
+        elif "response" in prompt.lower() or "reply" in prompt.lower():
+            return "Thank you for reporting this issue. Our team is reviewing it and will update you shortly with more information. In the meantime, please let us know if you have any additional details that might help us address this more effectively."
+        
+        else:
+            return f"This is a mock response to your query: '{prompt[:50]}...'. The LLM service is not properly configured. Please check your API key and connection."
 
-# Helper functions for Jira + LLM integration
 def get_llm_service():
     """Get an LLM service instance, falling back to a mock if needed."""
     try:
-        return DeepSeekLLM()
+        return LLMService()
     except Exception as e:
         print(f"WARNING: Using MockLLM due to error: {str(e)}")
         return MockLLM()
+
+# Helper functions for Jira + LLM integration
 
 def summarize_ticket(llm, ticket_data):
     """Generate a summary of a Jira ticket using LLM."""
@@ -162,3 +203,14 @@ def analyze_project_tickets(llm, project_stats):
     """
     
     return llm.generate_response(prompt)
+
+# If run directly, test the LLM service
+if __name__ == "__main__":
+    print("Testing LLM service...")
+    try:
+        llm = get_llm_service()
+        response = llm.generate_response("Hello, this is a test message. Please respond with a short greeting.")
+        print("\nResponse from LLM:")
+        print(response)
+    except Exception as e:
+        print(f"Error testing LLM service: {e}")

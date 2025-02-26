@@ -275,50 +275,6 @@ def llm_status():
 def page_not_found(e):
     return render_template('404.html'), 404
 
-@app.route("/diagnostics")
-def diagnostics():
-    """Show system diagnostic information."""
-    import sys
-    import flask
-    import pkg_resources
-    
-    # Check if we're connected to Jira
-    jira_connected = "jira_url" in session and "pat" in session
-    jira_url = session.get("jira_url", "Not connected")
-    
-    # Get installed packages
-    required_packages = ["requests", "python-dotenv", "flask"]
-    installed_packages = {pkg.key: pkg.version for pkg in pkg_resources.working_set}
-    
-    packages = []
-    for pkg_name in required_packages:
-        packages.append({
-            "name": pkg_name,
-            "version": installed_packages.get(pkg_name, "Not installed"),
-            "installed": pkg_name in installed_packages,
-            "required": True
-        })
-    
-    # Add optional packages
-    optional_packages = ["pandas", "matplotlib", "numpy"]
-    for pkg_name in optional_packages:
-        if pkg_name in installed_packages:
-            packages.append({
-                "name": pkg_name,
-                "version": installed_packages.get(pkg_name),
-                "installed": True,
-                "required": False
-            })
-    
-    return render_template("diagnostics.html",
-                          flask_version=flask.__version__,
-                          python_version=f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
-                          debug_mode=app.debug,
-                          llm_available=llm_service is not None,
-                          jira_connected=jira_connected,
-                          jira_url=jira_url,
-                          packages=packages)
-
 if __name__ == "__main__":
     # Print application status
     print(f"INFO: Starting Flask app with LLM service: {llm_service is not None}")
